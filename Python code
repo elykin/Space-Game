@@ -1,0 +1,378 @@
+import pygame
+import os
+import random
+import sys
+
+pygame.init()
+
+# Window Size
+SCREEN_WIDTH = 600
+SCREEN_HEIGHT = 800
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+
+# Window Title
+pygame.display.set_caption("Space Fucker")
+
+clock = pygame.time.Clock()
+
+# Game Variables
+ALIEN_SHOOT_DELAY_MIN = 1000 # milliseconds
+ALIEN_SHOOT_DELAY_MAX = 2250 # milliseconds
+ALIEN_BULLET_SPEED = 7
+PLAYER_BULLET_SPEED = 7
+ALIEN_DAMAGE = 10
+PLAYER_SPEED = 5
+PLAYER_COOLDOWN = 180
+ALIEN_BOUNDARY_Y = SCREEN_HEIGHT // 2
+MIN_ENEMIES = 4
+MAX_ENEMIES = 7
+RESPAWN_THRESHOLD = 3
+MAX_AMMO = 20
+RELOAD_TIME = 1000  # milliseconds
+BIG_FIREBALL_THRESHOLD = 10
+BIG_FIREBALL_RADIUS = 100
+BIG_FIREBALL_SPEED = 5
+BIG_FIREBALL_DAMAGE = 50
+game_over = False
+score = 0
+
+# Load images
+background_image = pygame.image.load(
+    os.path.join(r"C:\Users\Elykin\PycharmProjects\pythonProject1\Practice\pygame", "space.png"))
+background_image = pygame.transform.scale(background_image, (SCREEN_WIDTH, SCREEN_HEIGHT))
+
+spaceship_image = pygame.image.load(
+    os.path.join(r"C:\Users\Elykin\PycharmProjects\pythonProject1\Practice\pygame", "spaceship.png"))
+original_size = spaceship_image.get_size()
+new_size = (original_size[0] // 8, original_size[1] // 8)
+spaceship_image = pygame.transform.scale(spaceship_image, new_size)
+
+bullet_image = pygame.image.load(
+    os.path.join(r"C:\Users\Elykin\PycharmProjects\pythonProject1\Practice\pygame", "fireball.png"))
+bullet_image = pygame.transform.scale(bullet_image, (10, 20))
+
+alien_image = pygame.image.load(
+    os.path.join(r"C:\Users\Elykin\PycharmProjects\pythonProject1\Practice\pygame", "alien.png"))
+alien_image = pygame.transform.scale(alien_image, (40, 40))
+
+alien2_image = pygame.image.load(
+    os.path.join(r"C:\Users\Elykin\PycharmProjects\pythonProject1\Practice\pygame", "alien2.png"))
+alien2_image = pygame.transform.scale(alien2_image, (40, 40))
+
+# Spaceship as window icon
+pygame.display.set_icon(spaceship_image)
+
+# Load font
+pygame.font.init()
+game_font = pygame.font.Font(None, 24)  # default font muna
+
+# sprite groups
+all_sprites = pygame.sprite.Group()
+bullet_group = pygame.sprite.Group()
+alien_group = pygame.sprite.Group()
+alien_bullet_group = pygame.sprite.Group()
+big_fireball_group = pygame.sprite.Group()
+
+class Spaceship(pygame.sprite.Sprite):
+    def __init__(self, x, y, speed, health):
+        pygame.sprite.Sprite.__init__(self)
+        self.image = spaceship_image
+        self.rect = self.image.get_rect(center=(x, y))
+        self.speed = speed
+        self.health = health
+        self.max_health = health
+        self.last_shot = pygame.time.get_ticks()
+        self.ammo = MAX_AMMO
+        self.reloading = False
+        self.reload_start_time = 0
+        self.alien_kills = 0
+        self.big_fireball_ready = False
+
+    def update(self):
+        key = pygame.key.get_pressed()
+        if key[pygame.K_a] and self.rect.left > 0:
+            self.rect.move_ip(-self.speed, 0)
+        elif key[pygame.K_d] and self.rect.right < SCREEN_WIDTH:
+            self.rect.move_ip(self.speed, 0)
+
+        time_now = pygame.time.get_ticks()
+
+        # reloading
+        if self.reloading:
+            if time_now - self.reload_start_time > RELOAD_TIME:
+                self.ammo = MAX_AMMO
+                self.reloading = False
+        elif key[pygame.K_r] and self.ammo < MAX_AMMO:
+            self.reloading = True
+            self.reload_start_time = time_now
+
+        # shooting
+        if key[pygame.K_SPACE] and time_now - self.last_shot > PLAYER_COOLDOWN and self.ammo > 0 and not self.reloading:
+            bullet = Bullet(self.rect.centerx, self.rect.top)
+            all_sprites.add(bullet)
+            bullet_group.add(bullet)
+            self.last_shot = time_now
+            self.ammo -= 1
+
+        #Skill for "Q"
+        if self.big_fireball_ready and key[pygame.K_q]:
+            big_fireball = BigFireball(self.rect.centerx, self.rect.top)
+            all_sprites.add(big_fireball)
+            big_fireball_group.add(big_fireball)
+            self.big_fireball_ready = False
+            self.alien_kills = 0
+
+    def start_reload(self):
+        if not self.reloading and self.ammo < MAX_AMMO:
+            self.reloading = True
+            self.reload_start_time = pygame.time.get_ticks()
+
+class Bullet(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        pygame.sprite.Sprite.__init__(self)
+        self.image = bullet_image
+        self.rect = self.image.get_rect()
+        self.rect.center = [x, y]
+
+    def update(self):
+        self.rect.y -= PLAYER_BULLET_SPEED
+        if self.rect.bottom < 0:
+            self.kill()
+
+class BigFireball(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        pygame.sprite.Sprite.__init__(self)
+        self.original_image = bullet_image
+        self.image = pygame.transform.scale(self.original_image, (40, 80))  # Larger size
+        self.image = self.add_tint(self.image, (255, 165, 0))  # Add orange tint
+        self.rect = self.image.get_rect()
+        self.rect.center = [x, y]
+        self.radius = BIG_FIREBALL_RADIUS
+
+    def add_tint(self, surf, tint_color):
+        tinted_surf = surf.copy()
+        tinted_surf.fill(tint_color, special_flags=pygame.BLEND_RGB_ADD)
+        return tinted_surf
+
+    def update(self):
+        self.rect.y -= BIG_FIREBALL_SPEED
+        if self.rect.bottom < 0:
+            self.kill()
+
+    def explode(self):
+        for alien in alien_group:
+            if pygame.math.Vector2(self.rect.center).distance_to(alien.rect.center) <= self.radius:
+                alien.kill()
+        self.kill()
+
+class Alien(pygame.sprite.Sprite):
+    def __init__(self, x, y, image):
+        pygame.sprite.Sprite.__init__(self)
+        self.image = image
+        self.rect = self.image.get_rect()
+        self.rect.center = [x, y]
+        self.speed_x = random.choice([-2, -1, 1, 2])
+        self.speed_y = random.choice([-2, -1, 1, 2])
+        self.last_shot = pygame.time.get_ticks()
+        self.shoot_delay = random.randint(ALIEN_SHOOT_DELAY_MIN, ALIEN_SHOOT_DELAY_MAX)
+
+    def update(self):
+        self.rect.x += self.speed_x
+        self.rect.y += self.speed_y
+
+        if self.rect.left < 0 or self.rect.right > SCREEN_WIDTH:
+            self.speed_x = -self.speed_x
+        if self.rect.top < 0 or self.rect.bottom > ALIEN_BOUNDARY_Y:
+            self.speed_y = -self.speed_y
+
+        self.rect.clamp_ip(pygame.Rect(0, 0, SCREEN_WIDTH, ALIEN_BOUNDARY_Y))
+
+        time_now = pygame.time.get_ticks()
+        if time_now - self.last_shot > self.shoot_delay:
+            bullet = AlienBullet(self.rect.centerx, self.rect.bottom)
+            all_sprites.add(bullet)
+            alien_bullet_group.add(bullet)
+            self.last_shot = time_now
+            self.shoot_delay = random.randint(ALIEN_SHOOT_DELAY_MIN, ALIEN_SHOOT_DELAY_MAX)
+
+class AlienBullet(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        pygame.sprite.Sprite.__init__(self)
+        self.image = pygame.Surface((5, 10))
+        self.image.fill((255, 0, 0))  # Red color for alien bullets
+        self.rect = self.image.get_rect()
+        self.rect.center = [x, y]
+
+    def update(self):
+        self.rect.y += ALIEN_BULLET_SPEED
+        if self.rect.top > SCREEN_HEIGHT:
+            self.kill()
+
+def create_aliens(num_aliens):
+    for _ in range(num_aliens):
+        alien_image_choice = random.choice([alien_image, alien2_image])
+        x = random.randint(0, SCREEN_WIDTH - alien_image_choice.get_width())
+        y = random.randint(0, ALIEN_BOUNDARY_Y - alien_image_choice.get_height())
+        alien = Alien(x, y, alien_image_choice)
+        all_sprites.add(alien)
+        alien_group.add(alien)
+
+def draw_health_bar(surface, x, y, health, max_health):
+    BAR_LENGTH = 100
+    BAR_HEIGHT = 10
+    fill = (health / max_health) * BAR_LENGTH
+    outline_rect = pygame.Rect(x, y, BAR_LENGTH, BAR_HEIGHT)
+    fill_rect = pygame.Rect(x, y, fill, BAR_HEIGHT)
+
+    fill_color = (0, 255, 0) if health > 0 else (255, 0, 0)
+    pygame.draw.rect(surface, fill_color, fill_rect)
+    pygame.draw.rect(surface, (255, 255, 255), outline_rect, 2)
+
+    health_text = game_font.render(f"buhay ng bobo: {health}/{max_health}", True, (255, 255, 255))
+    text_rect = health_text.get_rect(bottom=y - 5, left=x)
+    surface.blit(health_text, text_rect)
+
+def draw_ammo_indicator(surface, ammo, max_ammo, reloading):
+    BAR_LENGTH = 100
+    BAR_HEIGHT = 10
+    MARGIN = 20
+    x = SCREEN_WIDTH - BAR_LENGTH - MARGIN
+    y = SCREEN_HEIGHT - BAR_HEIGHT - MARGIN
+
+    fill = (ammo / max_ammo) * BAR_LENGTH
+    outline_rect = pygame.Rect(x, y, BAR_LENGTH, BAR_HEIGHT)
+    fill_rect = pygame.Rect(x, y, fill, BAR_HEIGHT)
+
+    pygame.draw.rect(surface, (0, 255, 0), fill_rect)
+    pygame.draw.rect(surface, (255, 255, 255), outline_rect, 2)
+
+    ammo_text = game_font.render(f"Bala ng bano: {ammo}/{max_ammo}", True, (255, 255, 255))
+    text_rect = ammo_text.get_rect(bottom=y - 5, right=SCREEN_WIDTH - MARGIN)
+    surface.blit(ammo_text, text_rect)
+
+    if reloading:
+        reload_text = game_font.render("Reloading...", True, (255, 255, 0))
+        reload_rect = reload_text.get_rect(top=y + BAR_HEIGHT + 5, right=SCREEN_WIDTH - MARGIN)
+        surface.blit(reload_text, reload_rect)
+
+def draw_big_fireball_indicator(surface, ready):
+    if ready:
+        text = game_font.render("Your Big Betlog is Ready to Fire! Press Q to use", True, (255, 165, 0))
+        text_rect = text.get_rect(top=10, centerx=SCREEN_WIDTH // 2)
+        surface.blit(text, text_rect)
+
+# Create spaceship
+spaceship = Spaceship(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 120, PLAYER_SPEED, 100)
+all_sprites.add(spaceship)
+
+# alien spawn point
+create_aliens(random.randint(MIN_ENEMIES, MAX_ENEMIES))
+
+
+def reset_game():
+    global game_over, score, spaceship, all_sprites, bullet_group, alien_group, alien_bullet_group, big_fireball_group
+
+    game_over = False
+    score = 0
+
+    all_sprites = pygame.sprite.Group()
+    bullet_group = pygame.sprite.Group()
+    alien_group = pygame.sprite.Group()
+    alien_bullet_group = pygame.sprite.Group()
+    big_fireball_group = pygame.sprite.Group()
+
+    spaceship = Spaceship(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 120, PLAYER_SPEED, 100)
+    all_sprites.add(spaceship)
+
+    create_aliens(random.randint(MIN_ENEMIES, MAX_ENEMIES))
+
+def show_game_over_screen():
+    screen.fill((0, 0, 0))  # Black background
+
+    game_over_font = pygame.font.Font(None, 64)
+    score_font = pygame.font.Font(None, 36)
+
+    game_over_text = game_over_font.render("GAME OVER!", True, (255, 0, 0))
+    score_text = score_font.render(f"Score: {score}", True, (255, 255, 255))
+    play_again_text = score_font.render("Press SPACE to play again or ESC to quit", True, (255, 165, 0))
+
+    screen.blit(game_over_text, (SCREEN_WIDTH // 2 - game_over_text.get_width() // 2, SCREEN_HEIGHT // 3))
+    screen.blit(score_text, (SCREEN_WIDTH // 2 - score_text.get_width() // 2, SCREEN_HEIGHT // 2))
+    screen.blit(play_again_text, (SCREEN_WIDTH // 2 - play_again_text.get_width() // 2, SCREEN_HEIGHT * 2 // 3))
+
+    pygame.display.flip()
+
+    waiting = True
+    while waiting:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_SPACE:
+                    waiting = False
+                    reset_game()
+                elif event.key == pygame.K_ESCAPE:
+                    pygame.quit()
+                    sys.exit()
+
+# Game Loop
+run = True
+reset_game()  # Initialize the game state
+
+while run:
+    if not game_over:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                run = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r:
+                    spaceship.start_reload()
+
+        all_sprites.update()
+        alien_bullet_group.update()
+
+        current_enemy_count = len(alien_group)
+        if current_enemy_count <= RESPAWN_THRESHOLD:
+            num_to_spawn = random.randint(MIN_ENEMIES, MAX_ENEMIES) - current_enemy_count
+            create_aliens(num_to_spawn)
+
+        hits = pygame.sprite.groupcollide(bullet_group, alien_group, True, True)
+        for hit in hits:
+            spaceship.alien_kills += 1
+            score += 10  # Increase score for each alien killed
+            if spaceship.alien_kills >= BIG_FIREBALL_THRESHOLD:
+                spaceship.big_fireball_ready = True
+
+        for fireball in big_fireball_group:
+            hits = pygame.sprite.spritecollide(fireball, alien_group, True, pygame.sprite.collide_circle)
+            if hits:
+                fireball.explode()
+                score += len(hits) * 20  # Increase score for big fireball kills
+
+        hits = pygame.sprite.spritecollide(spaceship, alien_bullet_group, True)
+        for hit in hits:
+            spaceship.health -= ALIEN_DAMAGE
+            if spaceship.health <= 0:
+                game_over = True
+
+        screen.blit(background_image, (0, 0))
+        all_sprites.draw(screen)
+        alien_bullet_group.draw(screen)
+        big_fireball_group.draw(screen)
+
+        draw_health_bar(screen, 20, SCREEN_HEIGHT - 40, spaceship.health, spaceship.max_health)
+        draw_ammo_indicator(screen, spaceship.ammo, MAX_AMMO, spaceship.reloading)
+        draw_big_fireball_indicator(screen, spaceship.big_fireball_ready)
+
+        # Draw score
+        score_text = game_font.render(f"Score: {score}", True, (255, 255, 255))
+        screen.blit(score_text, (20, 20))
+
+        pygame.display.flip()
+    else:
+        show_game_over_screen()
+
+    clock.tick(60)
+
+pygame.quit()
