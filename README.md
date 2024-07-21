@@ -24,4 +24,4 @@ Requirements:
 Python 3.11
 Pygame
 
-Clone the repository and run space_fucker.py to start playing!
+Clone the repository and run space_fucker.py to start playing, pussy!
